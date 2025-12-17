@@ -1,0 +1,11 @@
+SPM
+large-data
+.DS_Store
+.RData
+.Rproj.user
+.Rhistory
+.Ruserdata
+*.swp
+Thumbs.db
+~*
+literature/*.pdf
