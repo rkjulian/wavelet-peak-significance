@@ -141,7 +141,7 @@ combined_data <- map_dfr(names(instrument_data), ~ create_instrument_data(
 ))
 
 # Process data for both instruments
-data_dir <- "large-data/S-BSST880"
+data_dir <- "data/S-BSST880"
 chromatogram_data <- empty_chrom()
 
 for (i in 1:nrow(combined_data)) {
@@ -194,7 +194,7 @@ print_summary_plots <- function(instrument, peak_data) {
   # Save complete data to CSV
   peak_data_combined |>
     select(-prominence) |>
-    write_csv(file.path("analysis", paste0("RvT4_qual_peak_data_", instrument, ".csv")))
+    write_csv(file.path("results", "tables", paste0("RvT4_qual_peak_data_", instrument, ".csv")))
 
   # Filter out non-finite values for plotting
   peak_data_valid <- peak_data_combined |>
@@ -344,7 +344,7 @@ merge_nearby_peaks <- function(peak_data, min_separation = 0.05) {
 }
 
 # Open PDF file
-pdf(file.path("analysis", "RvT4_Qual_Chemical_Noise_Analysis.pdf"),
+pdf(file.path("figures", "supplemental_figures", "RvT4_Qual_Chemical_Noise_Analysis.pdf"),
   width = 8.5, height = 11, onefile = TRUE
 )
 
@@ -628,4 +628,4 @@ dev.off()
 
 # Export results to JSON
 json_text <- toJSON(json_results, pretty = TRUE, auto_unbox = TRUE)
-write(json_text, file = "RvT4_qual_chemical_noise.json")
+write(json_text, file = file.path("results", "json", "RvT4_qual_chemical_noise.json"))

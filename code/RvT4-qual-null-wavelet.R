@@ -146,7 +146,7 @@ combined_data <- map_dfr(names(instrument_data), ~ create_instrument_data(
 ))
 
 # Process data for both instruments
-data_dir <- "large-data/S-BSST880"
+data_dir <- file.path("data", "S-BSST880")
 chromatogram_data <- empty_chrom()
 
 for (i in 1:nrow(combined_data)) {
@@ -207,7 +207,7 @@ generate_gaussian <- function(mu, amplitude, scale, time) {
 }
 
 # Setup the PDF file
-pdf(file.path("analysis", "RvT4-qual-stats.pdf"),
+pdf(file.path("figures", "supplemental_figures", "RvT4-qual-plots.pdf"),
   width = 11, height = 8.5, onefile = TRUE
 )
 
@@ -239,7 +239,7 @@ for (i in 1:nrow(combined_data)) {
     num_new_events <- 1 # Number of new chemical noise events to generate
 
     # Load chemical noise statistics (from RvT4-qual-chemical-noise.R)
-    peak_data <- read_csv(file.path("analysis", "RvT4_qual_peak_data_6500.csv"))
+    peak_data <- read_csv(file.path("results", "tables", "RvT4_qual_peak_data_6500.csv"))
 
     # Derive components needed for constructing null model
 
@@ -261,7 +261,7 @@ for (i in 1:nrow(combined_data)) {
     num_new_events <- 1 # Number of new chemical noise events to generate
 
     # Load chemical noise statistics (from RvT4-qual-chemical-noise.R)
-    peak_data <- read_csv(file.path("analysis", "RvT4_qual_peak_data_7500.csv"))
+    peak_data <- read_csv(file.path("results", "tables", "RvT4_qual_peak_data_7500.csv"))
 
     # Derive components needed for constructing null model
 
@@ -526,4 +526,4 @@ dev.off()
 json_text <- toJSON(simulation_results, pretty = TRUE, auto_unbox = TRUE)
 
 # Write the JSON text to a file
-write(json_text, file = "RvT4_qual_results.json")
+write(json_text, file = file.path("results", "json", "RvT4_qual_results.json"))
