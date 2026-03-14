@@ -1,7 +1,6 @@
 library(MSnbase)
 library(tidyverse)
 library(MassSpecWavelet)
-library(viridis)
 library(foreach)
 library(doParallel)
 library(truncnorm)
@@ -10,81 +9,15 @@ library(jsonlite)
 # Clear the environment
 rm(list = ls())
 
+# Source shared functions
+source(file.path("code", "mc_wavelet_functions.R"))
+
 # Set seed for reproducibility
 set.seed(42)
-
-PLOT_COI <- FALSE
-
-# Function to create formatted labels for intensity in plots
-inten_label <- function(break_value) {
-  expressions <- vector("list", length(break_value))
-
-  for (i in seq_along(break_value)) {
-    if (break_value[i] == 0 || is.na(break_value[i])) {
-      expressions[[i]] <- parse(text = "0")[[1]]
-    } else {
-      mantissa <- break_value[i] / 10^floor(log10(abs(break_value[i])))
-      exponent <- floor(log10(abs(break_value[i])))
-      text <- sprintf("%.2f*x*10^%d", mantissa, as.integer(exponent))
-      expressions[[i]] <- parse(text = text)[[1]]
-    }
-  }
-
-  as.expression(expressions)
-}
 
 # -----------------------------------------------------------------------------
 # 1. Read raw and meta data
 # -----------------------------------------------------------------------------
-
-# Helper function to create a data frame for instrument data
-create_instrument_data <- function(instrument, file_list, sample_list, quant_index, qual_index, is_index, is_rt) {
-  tibble(
-    instrument = instrument,
-    filename = file_list,
-    sample = sample_list,
-    quant_index = as.integer(quant_index),
-    qual_index = as.integer(qual_index),
-    is_index = as.integer(is_index),
-    is_rt = as.numeric(is_rt)
-  )
-}
-
-# Helper function to create an empty chromatogram data frame
-empty_chrom <- function() {
-  tibble(
-    RT = numeric(),
-    Intensity = numeric(),
-    Compound = character(),
-    Sample = character(),
-    instrument = character()
-  )
-}
-
-# Helper function to process SRM data for a single row
-process_srm_data <- function(row, data_dir) {
-  srm_filename <- file.path(data_dir, "mzML", row$filename)
-  srm <- readSRMData(srm_filename)
-
-  compounds <- c("Quant", "Qual", "IS")
-  indices <- c(row$quant_index, row$qual_index, row$is_index)
-
-  chromatogram_data <- map2_dfr(compounds, indices, ~ {
-    tibble(
-      RT = rtime(srm[.y]),
-      Intensity = intensity(srm[.y]),
-      Compound = .x,
-      Sample = row$sample
-    )
-  })
-
-  is_rt <- chromatogram_data |>
-    filter(Compound == "IS") |>
-    slice(which.max(Intensity)) |>
-    pull(RT)
-
-  list(chromatogram_data = chromatogram_data, is_rt = is_rt)
-}
 
 # Define instrument-specific data
 instrument_data <- list(
@@ -161,21 +94,8 @@ for (i in 1:nrow(combined_data)) {
 }
 
 # Calculate quant offsets
-calculate_quant_offset <- function(data, instrument) {
-  quant_rt <- chromatogram_data |>
-    filter(instrument == !!instrument, Sample == paste(instrument, "STD"), Compound == "Qual") |>
-    slice(which.max(Intensity)) |>
-    pull(RT)
-
-  is_rt <- data |>
-    filter(instrument == !!instrument, sample == paste(instrument, "STD")) |>
-    pull(is_rt)
-
-  quant_rt - is_rt
-}
-
-quant_offset_6500 <- calculate_quant_offset(combined_data, "6500")
-quant_offset_7500 <- calculate_quant_offset(combined_data, "7500")
+quant_offset_6500 <- calculate_quant_offset(combined_data, "6500", chromatogram_data, "Qual", paste("6500", "STD"))
+quant_offset_7500 <- calculate_quant_offset(combined_data, "7500", chromatogram_data, "Qual", paste("7500", "STD"))
 
 combined_data <- combined_data |>
   mutate(quant_rt = case_when(
@@ -183,35 +103,6 @@ combined_data <- combined_data |>
     instrument == "7500" ~ is_rt + quant_offset_7500,
     TRUE ~ NA_real_
   ))
-
-# Sampling function for extracting values from power density
-sample_from_kde <- function(density, n) {
-  sample(density$x, size = n, prob = density$y, replace = TRUE)
-}
-
-# Function to create Guassians for chemical noise
-generate_gaussian <- function(mu, amplitude, scale, time) {
-  # Step size in the time series
-  delta_time <- mean(diff(time)) # Average spacing between time points
-
-  # Sigma in data points and time units
-  sigma_points <- scale # Gaussian width in data points
-  sigma_time <- sigma_points * delta_time # Gaussian width in time units
-
-  # Adjust mu to the closest time point in the time series
-  mu_closest <- time[which.min(abs(time - mu))]
-
-  # Generate the Gaussian
-  gaussian <- amplitude * exp(-((time - mu_closest)^2) / (2 * sigma_time^2))
-  return(gaussian)
-}
-
-# Setup the PDF file
-pdf(file.path("figures", "supplemental_figures", "RvT4-quant-plots.pdf"),
-  width = 11, height = 8.5, onefile = TRUE
-)
-
-par(mfrow = c(3, 1), mar = c(4, 4, 2, 2))
 
 # Initialize an empty list to store results for each file
 simulation_results <- list()
@@ -225,48 +116,61 @@ for (i in 1:nrow(combined_data)) {
   expected_rt <- row$quant_rt
 
   if (instrument_name == "6500") {
-    # Data from the 6500 blank sample:
-    # Mean = 945.96
-    # SD = 428.6769
+    # Electronic noise from 6500 blank (external characterization):
+    # Mean = 945.96, SD = 428.6769
     # Shapiro-Wilk p-value 0.065
-    # Bootstrap SD bias: -5.230671
-    # Blank number of events (mean) 5 (sd ~ 1)
 
     blank_noise_mean <- 945.96
     blank_noise_std <- 428.6769
-
-    num_existing_events <- 5 # Number of existing events to sample
-    num_new_events <- 1 # Number of new chemical noise events to generate
 
     # Load chemical noise statistics (from RvT4-chemical-noise.R)
     peak_data <- read_csv(file.path("results", "tables", "RvT4_peak_data_6500.csv"))
 
     # Derive components needed for constructing null model
-
     power_density <- density(peak_data$power, from = 0) # KDE, truncated at zero
     power_density$y <- power_density$y / sum(power_density$y) # Renormalize
+
+    # Compute lambda for Poisson event count from per-sample peak counts
+    events_per_sample <- peak_data |>
+      group_by(Sample) |>
+      summarise(n_events = n(), .groups = "drop")
+    lambda_events <- mean(events_per_sample$n_events)
+
+    # Number of additional random chemical noise events per null simulation.
+    # Justified by: if a sample contained no analyte and a contaminant was
+    # detected at the expected RT, at least one new event must have occurred.
+    num_new_events <- 1
+
+    cat("  6500: lambda_events =", round(lambda_events, 2),
+        "(from", nrow(events_per_sample), "samples)\n")
+
   } else if (instrument_name == "7500") {
-    # Data from the 7500 blank sample
-    # W = 0.97932, p-value = 0.1568
-    # Mean = 3567.7
-    # SD = 429.622
+    # Electronic noise from 7500 blank (external characterization):
+    # Mean = 3567.7, SD = 429.622
     # Shapiro-Wilk p-value 0.16
-    #
-    # Blank number of events (mean) 10 (max 13) (sd ~ 1)
 
     blank_noise_mean <- 3567.7
     blank_noise_std <- 429.622
 
-    num_existing_events <- 10 # Number of existing events to sample
-    num_new_events <- 1 # Number of new chemical noise events to generate
-
-    # Load chemical noise statistics (from chemical-noise.R)
+    # Load chemical noise statistics (from RvT4-chemical-noise.R)
     peak_data <- read_csv(file.path("results", "tables", "RvT4_peak_data_7500.csv"))
 
     # Derive components needed for constructing null model
-
     power_density <- density(peak_data$power, from = 0) # KDE, truncated at zero
     power_density$y <- power_density$y / sum(power_density$y) # Renormalize
+
+    # Compute lambda for Poisson event count from per-sample peak counts
+    events_per_sample <- peak_data |>
+      group_by(Sample) |>
+      summarise(n_events = n(), .groups = "drop")
+    lambda_events <- mean(events_per_sample$n_events)
+
+    # Number of additional random chemical noise events per null simulation
+    num_new_events <- 1
+
+    cat("  7500: lambda_events =", round(lambda_events, 2),
+        "(from", nrow(events_per_sample), "samples)\n")
+
   } else {
     print("Unknown Instrument. Stopping.")
     break
@@ -313,78 +217,80 @@ for (i in 1:nrow(combined_data)) {
   # compute the observed power in sample
   adjusted_power <- abs(wavelet_result)^2
 
-  # setup for parallel processing: a cluster of cores using sockets
-  cl <- makeCluster(detectCores() - 1, type = "PSOCK")
-  registerDoParallel(cl)
-
-  # Load required packages on workers
-  invisible(clusterEvalQ(cl, {
-    library(MassSpecWavelet) # needed for cwt() inside cluster
-    library(truncnorm) # needed for the truncated rnorm
-  }))
-
-
-  # Export data objects needed in the loop
-  clusterExport(cl, c(
-    "peak_data", # characteristics of chemical noise
-    "scales", # used in cwt()
-    "wavelet_type", # used in cwt()
-    "retention_time", # the time axis of the sample
-    "adjusted_power", # observed power from sample
-    "power_density", # power density distribution of chemical noise
-    "sample_from_kde", # function to get a power value from density
-    "generate_gaussian", # function to generate chemical noise peaks
-    "num_existing_events", # number of chemical noise events per sample
-    "num_new_events", # number of random chemical noise events
-    "blank_noise_mean", # mean of normal distribution for blank noise
-    "blank_noise_std" # std dev of blank noise
-  ))
+  # Setup for parallel processing using fork via mclapply backend
+  # registerDoParallel(cores=) uses fork-based mclapply internally,
+  # avoiding PSOCK serialization and explicit cluster management
+  n_cores <- detectCores() - 4
+  registerDoParallel(cores = n_cores)
 
   # Define parameters
-  n_sim <- 1000000 # Total simulations
-  chunk_size <- 100000 # Number of simulations per chunk
+  n_sim <- 100000 # Total simulations
+  sims_per_worker <- ceiling(n_sim / n_cores) # Each worker accumulates internally
 
   # Initialize the count matrix
   counts <- matrix(0, nrow = nrow(adjusted_power), ncol = ncol(adjusted_power))
 
-  time_taken <- system.time(
-    # Run in chunks
-    for (start_sim in seq(1, n_sim, by = chunk_size)) {
-      end_sim <- min(start_sim + chunk_size - 1, n_sim)
-      cat("Processing simulations", start_sim, "to", end_sim, "\n")
+  cat("Running", n_sim, "simulations across", n_cores,
+      "workers (", sims_per_worker, "per worker)\n")
 
-      # Initialize chunk_counts to zero for each chunk
-      chunk_counts <- matrix(0, nrow = nrow(adjusted_power), ncol = ncol(adjusted_power))
+  time_taken <- system.time({
+    # Each worker runs sims_per_worker simulations and accumulates counts
+    # internally, returning only the summed count matrix. This minimizes
+    # inter-process communication from n_sim transfers to n_cores transfers.
+    counts <- foreach(
+      worker = seq_len(n_cores), .combine = "+"
+    ) %dopar% {
+      # Determine how many simulations this worker runs
+      worker_n <- if (worker < n_cores) {
+        sims_per_worker
+      } else {
+        n_sim - sims_per_worker * (n_cores - 1)
+      }
 
-      # Run a chunk of simulations in parallel
-      chunk_counts <- foreach(sim = start_sim:end_sim, .combine = "+") %dopar% {
-        # Sequential loop over simulations (for debugging)
-        # for (sim in start_sim:end_sim) {
+      # Local accumulator for this worker
+      local_counts <- matrix(0,
+        nrow = nrow(adjusted_power),
+        ncol = ncol(adjusted_power)
+      )
 
-        sampled_times <- sample(peak_data$time, num_existing_events)
-        sampled_scales <- sample(peak_data$scale, num_existing_events)
-        sampled_powers <- sample_from_kde(power_density, num_existing_events)
+      for (sim in seq_len(worker_n)) {
+        # Draw number of existing chemical noise events from Poisson
+        # Cap at pool size to prevent sample() error
+        num_existing <- min(rpois(1, lambda_events), nrow(peak_data))
 
-        # Add two new Gaussian events
-        new_times <- runif(num_new_events, min(retention_time), max(retention_time)) # Uniformly sample times
-        new_scales <- sample(peak_data$scale, num_new_events, replace = TRUE) # Sample scales from empirical distribution
-        new_powers <- sample_from_kde(power_density, num_new_events) # Sample powers from KDE
+        if (num_existing > 0) {
+          sampled_times <- sample(peak_data$time, num_existing)
+          sampled_scales <- sample(peak_data$scale, num_existing)
+          sampled_powers <- sample_from_kde(power_density, num_existing)
+        } else {
+          sampled_times <- numeric(0)
+          sampled_scales <- numeric(0)
+          sampled_powers <- numeric(0)
+        }
+
+        # Add new Gaussian event(s) at random positions
+        new_times <- runif(
+          num_new_events,
+          min(retention_time),
+          max(retention_time)
+        )
+        new_scales <- sample(
+          peak_data$scale, num_new_events, replace = TRUE
+        )
+        new_powers <- sample_from_kde(power_density, num_new_events)
 
         # Combine all events
         gaussian_means <- c(sampled_times, new_times)
         gaussian_widths <- c(sampled_scales, new_scales)
-        gaussian_amplitudes <- sqrt(c(
-          sampled_powers,
-          new_powers
-        )) # A = sqrt(P_wavelet)
+        gaussian_amplitudes <- sqrt(c(sampled_powers, new_powers))
 
         chemical_noise <- numeric(length(retention_time))
-        for (i in seq_along(gaussian_means)) {
+        for (j in seq_along(gaussian_means)) {
           chemical_noise <- chemical_noise +
             generate_gaussian(
-              gaussian_means[i],
-              gaussian_amplitudes[i],
-              gaussian_widths[i],
+              gaussian_means[j],
+              gaussian_amplitudes[j],
+              gaussian_widths[j],
               retention_time
             )
         }
@@ -398,30 +304,24 @@ for (i in 1:nrow(combined_data)) {
         # Total signal = chemical peaks + blank noise
         total_signal <- chemical_noise + electronic_noise
 
-        noise_wavelet <- cwt(total_signal, scales = scales, wavelet = wavelet_type)
+        noise_wavelet <- cwt(
+          total_signal, scales = scales, wavelet = wavelet_type
+        )
         noise_wavelet[noise_wavelet < 0] <- 0
         simulated_power <- abs(noise_wavelet)^2
 
-        # Compute the p-value: proportion of simulations exceeding observed power
-        # count_exceeding <- simulated_power >= adjusted_power
-
-        # Accumulate results
-        # chunk_counts <- chunk_counts + count_exceeding
-
-
-        return(simulated_power >= adjusted_power)
+        local_counts <- local_counts + (simulated_power >= adjusted_power)
       }
 
-      # Accumulate results from the chunk
-      counts <- counts + chunk_counts
+      local_counts
     }
-  )
+  })
 
-  # print time
+  # Print time
   print(time_taken)
 
-  # Clean up cluster
-  stopCluster(cl)
+  # Clean up parallel backend
+  stopImplicitCluster()
 
   # Compute p-values
   p_values <- counts / n_sim
@@ -437,78 +337,16 @@ for (i in 1:nrow(combined_data)) {
   # Set significance level
   alpha <- 0.05
 
-  # Identify significant time points
-  significant_times <- which(p_adjusted < alpha)
-
-  # --------------------------------------------------------------------------
-  # 3. Plots
-  # --------------------------------------------------------------------------
-
-  # Plot 1: Original signals with SNR
-  plot(retention_time, sample_y,
-    type = "l", col = "blue",
-    main = paste0("Sample: ", sample_name),
-    xlab = "Time", ylab = "Amplitude",
-    xaxs = "i"
-  )
-  abline(v = expected_rt, col = "black", lty = 2)
-
-  # Plot 2: Log-scaled Wavelet power spectrum
-  power_transformed <- asinh(adjusted_power)
-
-  image(
-    x = retention_time,
-    y = scales,
-    z = power_transformed,
-    col = viridis(256),
-    xlab = "Time",
-    ylab = "Scale",
-    main = "Mexican Hat Wavelet Power Spectrum (asinh scaled)"
-  )
-
-  # Plot 3: Minimum p-values with FWER correction
-  y_limits <- range(-log(p_adjusted[is.finite(-log(p_adjusted))]))
-  y_range <- diff(y_limits)
-  y_min <- y_limits[1] - 0.05 * y_range
-  y_max <- y_limits[2] + 0.05 * y_range
-
-  plot(retention_time, -log(p_adjusted),
-    type = "l",
-    main = "Significance Testing (Holm FWER-adjusted minimum p-values)",
-    xlab = "Time", ylab = "-ln(p)",
-    xaxs = "i", ylim = c(y_min, max(y_max, -log(alpha)))
-  )
-
-  # Add COI shading as full-height rectangles
-  if (PLOT_COI) {
-    # Calculate COI width for maximum scale
-    dt <- mean(diff(retention_time))
-    max_scale <- max(scales)
-    coi_width_time <- 5 * max_scale * dt
-
-    # Left edge
-    rect(retention_time[1], y_min, retention_time[1] + coi_width_time, y_max,
-      col = rgb(0.5, 0.5, 0.5, 0.3), border = NA
-    )
-    # Right edge
-    rect(retention_time[n_points] - coi_width_time, y_min, retention_time[n_points], y_max,
-      col = rgb(0.5, 0.5, 0.5, 0.3), border = NA
-    )
-  }
-
-  abline(h = -log(alpha), col = "red", lty = 2)
-  points(retention_time[significant_times],
-    -log(p_adjusted[significant_times]),
-    col = "red", pch = 20
-  )
-  abline(v = expected_rt, col = "black", lty = 2)
-
   # Save the current iteration's outputs into the simulation_results list.
   simulation_results[[i]] <- list(
     instrument     = row$instrument,
     sample         = row$sample,
     expected_rt    = row$quant_rt,
     alpha          = alpha,
+    n_sim          = n_sim,
+    analyte_name   = "RvT4",
+    precursor_mz   = "361.1",
+    product_mz     = "211.1",
     time           = retention_time,
     intensity      = sample_y,
     p_adjusted     = p_adjusted,
@@ -516,7 +354,6 @@ for (i in 1:nrow(combined_data)) {
     scales         = scales
   )
 }
-dev.off()
 
 # Convert the list to JSON.
 # The 'auto_unbox = TRUE' option makes sure that single values remain as scalars in JSON.

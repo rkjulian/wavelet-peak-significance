@@ -7,78 +7,16 @@ library(ggh4x) # Enhanced ggplot2 facets
 library(forcats) # Working with factors
 library(jsonlite) # For JSON export
 
+
 # Clear the environment
 rm(list = ls())
 
+# Source shared functions
+source(file.path("code", "mc_wavelet_functions.R"))
+source(file.path("code", "mc_wavelet_plot_functions.R"))
+
 # Set seed for reproducibility
 set.seed(42)
-
-# Function to create formatted labels for intensity in plots
-inten_label <- function(break_value) {
-  expressions <- vector("list", length(break_value))
-
-  for (i in seq_along(break_value)) {
-    if (break_value[i] == 0 || is.na(break_value[i])) {
-      expressions[[i]] <- parse(text = "0")[[1]]
-    } else {
-      mantissa <- break_value[i] / 10^floor(log10(abs(break_value[i])))
-      exponent <- floor(log10(abs(break_value[i])))
-      text <- sprintf("%.2f*x*10^%d", mantissa, as.integer(exponent))
-      expressions[[i]] <- parse(text = text)[[1]]
-    }
-  }
-
-  as.expression(expressions)
-}
-
-# Helper function to create a data frame for instrument data
-create_instrument_data <- function(instrument, file_list, sample_list, quant_index, qual_index, is_index, is_rt) {
-  tibble(
-    instrument = instrument,
-    filename = file_list,
-    sample = sample_list,
-    quant_index = as.integer(quant_index),
-    qual_index = as.integer(qual_index),
-    is_index = as.integer(is_index),
-    is_rt = as.numeric(is_rt)
-  )
-}
-
-# Helper function to create an empty chromatogram data frame
-empty_chrom <- function() {
-  tibble(
-    RT = numeric(),
-    Intensity = numeric(),
-    Compound = character(),
-    Sample = character(),
-    instrument = character()
-  )
-}
-
-# Helper function to process SRM data for a single row
-process_srm_data <- function(row, data_dir) {
-  srm_filename <- file.path(data_dir, "mzML", row$filename)
-  srm <- readSRMData(srm_filename)
-
-  compounds <- c("Quant", "Qual", "IS")
-  indices <- c(row$quant_index, row$qual_index, row$is_index)
-
-  chromatogram_data <- map2_dfr(compounds, indices, ~ {
-    tibble(
-      RT = rtime(srm[.y]),
-      Intensity = intensity(srm[.y]),
-      Compound = .x,
-      Sample = row$sample
-    )
-  })
-
-  is_rt <- chromatogram_data |>
-    filter(Compound == "IS") |>
-    slice(which.max(Intensity)) |>
-    pull(RT)
-
-  list(chromatogram_data = chromatogram_data, is_rt = is_rt)
-}
 
 # Define instrument-specific data
 instrument_data <- list(
@@ -126,6 +64,14 @@ instrument_data <- list(
   )
 )
 
+# Cross-scale consistency threshold for chemical noise peak detection.
+# A peak must be detected at >= this many wavelet scales to be considered a
+# real chromatographic feature rather than electronic noise. Electronic noise
+# produces incoherent fluctuations that appear at only 1-2 scales, while real
+# peaks produce coherent wavelet responses across multiple scales.
+# With 31 scales (1.5 to 3.0 by 0.05), 5 scales = ~16% of the scale range.
+min_scales_detected <- 5
+
 # Create combined data frame
 combined_data <- map_dfr(names(instrument_data), ~ create_instrument_data(
   .x,
@@ -153,21 +99,8 @@ for (i in 1:nrow(combined_data)) {
 }
 
 # Calculate quant offsets
-calculate_quant_offset <- function(data, instrument) {
-  quant_rt <- chromatogram_data |>
-    filter(instrument == !!instrument, Sample == "STD", Compound == "Qual") |>
-    slice(which.max(Intensity)) |>
-    pull(RT)
-
-  is_rt <- data |>
-    filter(instrument == !!instrument, sample == "STD") |>
-    pull(is_rt)
-
-  quant_rt - is_rt
-}
-
-quant_offset_6500 <- calculate_quant_offset(combined_data, "6500")
-quant_offset_7500 <- calculate_quant_offset(combined_data, "7500")
+quant_offset_6500 <- calculate_quant_offset(combined_data, "6500", chromatogram_data, "Qual", "STD")
+quant_offset_7500 <- calculate_quant_offset(combined_data, "7500", chromatogram_data, "Qual", "STD")
 
 combined_data <- combined_data |>
   mutate(quant_rt = case_when(
@@ -176,163 +109,6 @@ combined_data <- combined_data |>
     TRUE ~ NA_real_
   )) |>
   filter(sample != "STD")
-
-# Function to print summary plots
-print_summary_plots <- function(instrument, peak_data) {
-  # Combine all samples' data into a single data frame
-  peak_data_combined <- bind_rows(peak_data, .id = "Sample")
-
-  # Save complete data to CSV
-  peak_data_combined |>
-    select(-prominence) |>
-    write_csv(file.path("results", "tables", paste0("RvT4_peak_data_", instrument, ".csv")))
-
-  # Filter out non-finite values for plotting
-  peak_data_valid <- peak_data_combined |>
-    filter(is.finite(time), is.finite(power))
-
-  # Create time distribution plot
-  plot3 <- ggplot(peak_data_valid, aes(x = time)) +
-    geom_histogram(bins = 25, fill = "blue", color = "black", alpha = 0.7) +
-    labs(
-      title = bquote("Time Distribution - RvT4 Quant (m/z 361.1" %->% "211.1) - " ~ .(instrument)),
-      x = "Time (min)", y = "Frequency"
-    ) +
-    theme_minimal()
-
-  # Create power distribution plot
-  plot4 <- peak_data_valid |>
-    mutate(power_db = 10 * log10(power + 1e-10)) |>
-    filter(is.finite(power_db)) |>
-    ggplot(aes(x = power_db)) +
-    geom_histogram(aes(y = after_stat(density)),
-      bins = 15,
-      fill = "lightblue",
-      color = "black",
-      alpha = 0.5
-    ) +
-    geom_density(
-      color = "darkred",
-      linewidth = 1
-    ) +
-    labs(
-      title = bquote("Peak Power Distribution - RvT4 Quant (m/z 361.1" %->% "211.1) - " ~ .(instrument)),
-      x = "Power (dB)", y = "Density"
-    ) +
-    theme_minimal()
-
-  # Arrange plots vertically
-  dist_plots <- plot3 / plot4
-  print(dist_plots)
-}
-
-find_peaks <- function(data, t, scale, min_power = 1e-5, min_prominence_absolute = 1e4) {
-  window_size <- 3
-  smoothed_data <- stats::filter(data, rep(1 / window_size, window_size), sides = 2)
-  smoothed_data[is.na(smoothed_data)] <- 0
-
-  peaks <- numeric()
-  prominences <- numeric()
-
-  for (i in (window_size + 1):(length(smoothed_data) - window_size)) {
-    if (smoothed_data[i] >= 0.95 * max(smoothed_data[(i - window_size):(i + window_size)]) &&
-      smoothed_data[i] > min_power) {
-      # Calculate prominence
-      left_bound <- i
-      while (left_bound > 1) {
-        if (smoothed_data[left_bound - 1] > smoothed_data[i]) break
-        left_bound <- left_bound - 1
-      }
-
-      right_bound <- i
-      while (right_bound < length(smoothed_data)) {
-        if (smoothed_data[right_bound + 1] > smoothed_data[i]) break
-        right_bound <- right_bound + 1
-      }
-
-      left_min <- min(smoothed_data[left_bound:i])
-      right_min <- min(smoothed_data[i:right_bound])
-      reference_height <- max(left_min, right_min)
-      prominence <- smoothed_data[i] - reference_height
-
-      if (prominence >= min_prominence_absolute) {
-        peaks <- c(peaks, i)
-        prominences <- c(prominences, prominence)
-      }
-    }
-  }
-
-  peak_data <- data.frame(
-    index = peaks,
-    time = t[peaks],
-    power = data[peaks],
-    prominence = prominences,
-    scale = scale
-  )
-
-  # Add within-scale merging
-  if (nrow(peak_data) > 0) {
-    peak_data <- merge_nearby_peaks(peak_data, min_separation = 0.03) # Tighter threshold for same scale
-  }
-
-  return(peak_data)
-}
-
-merge_nearby_peaks <- function(peak_data, min_separation = 0.05) {
-  # Check if input is valid
-  if (!is.data.frame(peak_data) || nrow(peak_data) == 0) {
-    return(peak_data)
-  }
-
-  if (nrow(peak_data) <= 1) {
-    return(peak_data)
-  }
-
-  # Check if required columns exist
-  required_cols <- c("index", "time", "power", "prominence", "scale")
-  if (!all(required_cols %in% names(peak_data))) {
-    stop(
-      "Missing required columns in peak_data. Need: ",
-      paste(required_cols, collapse = ", ")
-    )
-  }
-
-  # Sort by prominence if it exists
-  if (length(peak_data$prominence) > 0) {
-    peak_data <- peak_data[order(-peak_data$prominence), ]
-  }
-
-  merged <- list()
-  used_indices <- numeric()
-
-  for (i in seq_len(nrow(peak_data))) {
-    if (length(peak_data$index[i]) == 0 || is.na(peak_data$index[i])) next
-    if (peak_data$index[i] %in% used_indices) next
-
-    nearby <- which(abs(peak_data$time - peak_data$time[i]) < min_separation)
-    nearby <- nearby[!(peak_data$index[nearby] %in% used_indices)]
-
-    if (length(nearby) > 0) {
-      weights <- peak_data$prominence[nearby]
-      merged[[length(merged) + 1]] <- data.frame(
-        index = peak_data$index[i],
-        time = weighted.mean(peak_data$time[nearby], weights),
-        power = max(peak_data$power[nearby]),
-        prominence = max(peak_data$prominence[nearby]),
-        scale = peak_data$scale[which.max(peak_data$prominence[nearby])]
-      )
-      used_indices <- c(used_indices, peak_data$index[nearby])
-    }
-  }
-
-  # Check if any peaks were merged
-  if (length(merged) == 0) {
-    return(peak_data[0, ]) # Return empty data frame with same structure
-  }
-
-  result <- dplyr::bind_rows(merged)
-  return(result)
-}
 
 # Open PDF file
 pdf(file.path("figures", "supplemental_figures", "RvT4_Chemical_Noise_Analysis.pdf"),
@@ -343,6 +119,9 @@ pdf(file.path("figures", "supplemental_figures", "RvT4_Chemical_Noise_Analysis.p
 current_instrument <- NULL
 all_peak_data <- list()
 scale_list <- seq(1.5, 3, 0.05) # Starting at 1.5 to skip noise scales
+
+cat("Cross-scale consistency filter: peaks must be detected at >= ",
+    min_scales_detected, " out of ", length(scale_list), " scales\n", sep = "")
 
 # Initialize list to store results for JSON export
 json_results <- list()
@@ -359,7 +138,9 @@ for (i in 1:nrow(combined_data)) {
   # Check for instrument change
   if (row$instrument != current_instrument && i > 1) {
     # Print summary plots for previous instrument
-    print_summary_plots(current_instrument, all_peak_data)
+    print_summary_plots(current_instrument, all_peak_data,
+      csv_prefix = "RvT4_peak_data_",
+      compound_name = "Quant", precursor_mz = "361.1", product_mz = "211.1")
 
     # Reset for new instrument
     current_instrument <- row$instrument
@@ -402,9 +183,11 @@ for (i in 1:nrow(combined_data)) {
     scale_data <- df |>
       select(t, all_of(scale_name))
 
-    # Find peaks
+    # Find all peaks above a minimal floor (cross-scale filter applied later).
+    # Using 1 (not 0) avoids zero-weight issues in merge_nearby_peaks.
     peaks <- find_peaks(scale_data[[scale_name]], scale_data$t,
-      scale = as.numeric(scale_name)
+      scale = as.numeric(scale_name),
+      min_prominence_absolute = 1
     )
 
     # Store peaks for this scale
@@ -419,31 +202,72 @@ for (i in 1:nrow(combined_data)) {
 
   # Combine peaks from all scales for this sample
   all_peaks_df <- bind_rows(all_peaks)
-
-  # Step 1: Remove Peaks Near `quant_rt`
   proximity_threshold <- 0.03
-  filtered_peaks <- all_peaks_df |>
-    filter(abs(PeakTime - row$quant_rt) > proximity_threshold)
 
-  # Step 2: Merge nearby peaks across all scales
-  if (nrow(filtered_peaks) > 0) {
-    # Transform filtered_peaks to match required column names
-    peaks_for_merging <- data.frame(
-      index = 1:nrow(filtered_peaks),
-      time = filtered_peaks$PeakTime,
-      power = filtered_peaks$PeakPower,
-      prominence = filtered_peaks$PeakPower, # Using power as prominence
-      scale = filtered_peaks$Scale
-    )
-    dominant_peaks_df <- merge_nearby_peaks(peaks_for_merging)
+  # Cross-scale consistency filtering: group peaks by time proximity
+  # across scales and require detection at multiple scales. This
+  # discriminates real chromatographic features (coherent across scales)
+  # from electronic noise artifacts (incoherent, 1-2 scales).
+  empty_peaks <- data.frame(
+    index = integer(0), time = numeric(0), power = numeric(0),
+    prominence = numeric(0), scale = numeric(0)
+  )
+
+  if (nrow(all_peaks_df) > 0 && "PeakTime" %in% names(all_peaks_df)) {
+    # Remove any rows with NA/NaN times (from zero-prominence merging artifacts)
+    all_peaks_df <- all_peaks_df[!is.na(all_peaks_df$PeakTime), ]
+  }
+
+  if (nrow(all_peaks_df) > 0 && "PeakTime" %in% names(all_peaks_df)) {
+    # Sort by time for sequential grouping
+    all_peaks_df <- all_peaks_df[order(all_peaks_df$PeakTime), ]
+
+    # Assign groups: consecutive peaks within tolerance belong to same feature
+    cross_scale_tolerance <- 0.05
+    group_ids <- integer(nrow(all_peaks_df))
+    group_ids[1] <- 1
+    gid <- 1
+    if (nrow(all_peaks_df) > 1) {
+      for (j in 2:nrow(all_peaks_df)) {
+        if (all_peaks_df$PeakTime[j] - all_peaks_df$PeakTime[j - 1] > cross_scale_tolerance) {
+          gid <- gid + 1
+        }
+        group_ids[j] <- gid
+      }
+    }
+    all_peaks_df$group <- group_ids
+
+    # Summarize each group: count unique scales, weighted mean time, max power
+    group_summary <- all_peaks_df |>
+      group_by(group) |>
+      summarise(
+        n_scales = n_distinct(Scale),
+        time = weighted.mean(PeakTime, PeakPower),
+        power = max(PeakPower),
+        scale = Scale[which.max(PeakPower)],
+        .groups = "drop"
+      ) |>
+      filter(n_scales >= min_scales_detected) |>
+      filter(abs(time - row$quant_rt) > proximity_threshold)
+
+    cat("  ", sample_name, ": ", nrow(all_peaks_df), " per-scale peaks -> ",
+        nrow(group_summary), " cross-scale features (>= ", min_scales_detected,
+        " scales)\n", sep = "")
+
+    if (nrow(group_summary) > 0) {
+      dominant_peaks_df <- data.frame(
+        index = seq_len(nrow(group_summary)),
+        time = group_summary$time,
+        power = group_summary$power,
+        prominence = group_summary$power,
+        scale = group_summary$scale
+      )
+    } else {
+      dominant_peaks_df <- empty_peaks
+    }
   } else {
-    dominant_peaks_df <- data.frame(
-      index = integer(0),
-      time = numeric(0),
-      power = numeric(0),
-      prominence = numeric(0),
-      scale = numeric(0)
-    )
+    cat("  ", sample_name, ": 0 per-scale peaks\n", sep = "")
+    dominant_peaks_df <- empty_peaks
   }
 
   # Step 3: Store Peak Data for the Current Sample
@@ -587,7 +411,9 @@ for (i in 1:nrow(combined_data)) {
 }
 
 # After the loop ends, print final instrument's summary plots
-print_summary_plots(current_instrument, all_peak_data)
+print_summary_plots(current_instrument, all_peak_data,
+  csv_prefix = "RvT4_peak_data_",
+  compound_name = "Quant", precursor_mz = "361.1", product_mz = "211.1")
 
 dev.off()
 
