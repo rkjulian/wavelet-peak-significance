@@ -459,7 +459,8 @@ for (i in 1:nrow(combined_data)) {
 # Print summary plots
 print_summary_plots("waters", all_peak_data,
                     csv_prefix = "Clonidine_quant_peak_data_",
-                    compound_name = "Quant", precursor_mz = "232.2", product_mz = "215.1")
+                    compound_name = "Quant", precursor_mz = "232.2", product_mz = "215.1",
+                    analyte_name = "Clonidine")
 
 dev.off()
 

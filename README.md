@@ -36,34 +36,66 @@ results/
   json/                      # Pre-computed wavelet analysis results (JSON)
   tables/                    # Peak data and noise estimates (CSV)
 figures/
+  main_figures/              # Assembled figures for manuscript (see below)
   supplemental_figures/      # Per-sample analysis PDFs (see below)
 ```
 
-## Supplemental Figures
+## Figures
 
-The `figures/supplemental_figures/` directory contains multi-page PDFs with per-sample chromatograms, wavelet power maps, and significance test results for every sample in both datasets. These are referenced from the paper and its supplemental information.
+All figures are pre-generated PDFs organized into two directories. If you are looking for a specific plot, start here.
 
-**Hypothesis testing (wavelet significance plots):**
+### Main Figures (`figures/main_figures/`)
 
-| File | Contents |
-|------|----------|
-| `Clonidine-quant-plots.pdf` | Clonidine dilution series (blanks through 64X, triplicate) |
-| `Gabapentin-quant-plots.pdf` | Gabapentin dilution series (blanks through 64X, triplicate) |
-| `Lorazepam-quant-plots.pdf` | Lorazepam dilution series (blanks through 64X, triplicate) |
-| `RvT4-quant-plots.pdf` | RvT4 on SCIEX 6500 and 7500 (blanks, standards, plasma samples) |
+Assembled multi-panel figures used in the manuscript text. Each file is a single-page PDF.
 
-Each page shows: raw chromatogram, CWT power scalogram, Monte Carlo null power, and adjusted p-value time series for one sample.
+**Null model example chromatograms** -- Show how the generative null model produces synthetic chromatograms that preserve the chemical noise structure of the original data. Each panel overlays the observed chromatogram with several null-model realizations drawn from the fitted noise parameters.
 
-**Chemical noise characterization:**
+| File | What it shows |
+|------|---------------|
+| `RvT4-null-chromatograms.pdf` | RvT4 observed vs. null-model chromatograms for the SCIEX 6500 and 7500 instruments. Demonstrates that the null model faithfully reproduces the baseline noise structure on both platforms. |
+| `waters-null-chromatograms.pdf` | Lorazepam observed vs. null-model chromatograms from the Waters Xevo TQ-XS dilution series. Shows null model fidelity across concentration levels from blank through high-concentration samples. |
 
-| File | Contents |
-|------|----------|
-| `Clonidine_Quant_Chemical_Noise_Analysis.pdf` | Chemical noise characterization for Clonidine |
-| `Gabapentin_Quant_Chemical_Noise_Analysis.pdf` | Chemical noise characterization for Gabapentin |
-| `Lorazepam_Quant_Chemical_Noise_Analysis.pdf` | Chemical noise characterization for Lorazepam |
-| `RvT4_Chemical_Noise_Analysis.pdf` | Chemical noise peak distributions for RvT4 samples |
+**Chemical noise time histograms** -- Histograms of peak retention times extracted from reagent blanks and low-concentration samples. Peaks that cluster at specific retention times indicate chemical noise (reproducible interferents) rather than random electronic noise.
 
-Each page shows: observed chemical noise peaks, empirical distributions of peak location, width (wavelet scale), and power used to build the null model.
+| File | What it shows |
+|------|---------------|
+| `RvT4-chemical-noise-time-histograms.pdf` | Distribution of chemical noise peak locations across RvT4 blank and plasma samples on the SCIEX 6500 and 7500. Reveals instrument-specific interferent patterns. |
+| `waters-chemical-noise-time-histograms.pdf` | Distribution of chemical noise peak locations for Clonidine, Gabapentin, and Lorazepam blanks on the Waters platform. Shows compound-specific interferent retention times. |
+
+**Chemical noise power distributions** -- Kernel density estimates (KDEs) of wavelet power at scales corresponding to chemical noise peaks. These characterize the amplitude distribution of interferent signals that the null model must reproduce.
+
+| File | What it shows |
+|------|---------------|
+| `RvT4-chemical-noise-power-distributions.pdf` | KDE of chemical noise peak power for RvT4 on SCIEX 6500 and 7500. Compares the power distributions between instruments. |
+| `waters-chemical-noise-power-distributions.pdf` | KDE of chemical noise peak power for Clonidine, Gabapentin, and Lorazepam on the Waters platform. Compares power distributions across compounds. |
+
+**Combined chemical noise comparison** -- Side-by-side comparison of time histograms and power distributions for the Waters dilution series compounds on a single page.
+
+| File | What it shows |
+|------|---------------|
+| `waters-chemical-noise-combined.pdf` | Combined time histogram and power KDE panels for all three Waters compounds (Clonidine, Gabapentin, Lorazepam), enabling direct cross-compound comparison of chemical noise characteristics. |
+
+### Supplemental Figures (`figures/supplemental_figures/`)
+
+Multi-page PDFs with one page per sample. These provide the complete per-sample analysis for every sample in both datasets.
+
+**Hypothesis testing (wavelet significance plots)** -- Each page is a four-panel figure for one sample showing: (1) the raw SRM chromatogram, (2) a CWT power scalogram (time vs. wavelet scale, colored by power), (3) the Monte Carlo null power envelope at the analyte scale, and (4) the FWER-adjusted p-value time series with a significance threshold line.
+
+| File | Samples included |
+|------|------------------|
+| `Clonidine-quant-plots.pdf` | Clonidine dilution series: reagent blanks and nine concentration levels (0.0195X--64X), each in triplicate |
+| `Gabapentin-quant-plots.pdf` | Gabapentin dilution series: reagent blanks and nine concentration levels (0.0195X--64X), each in triplicate |
+| `Lorazepam-quant-plots.pdf` | Lorazepam dilution series: reagent blanks and nine concentration levels (0.0195X--64X), each in triplicate |
+| `RvT4-quant-plots.pdf` | RvT4 on SCIEX 6500 and 7500: reagent blanks, standard mixes, and biological plasma samples (chow-diet and Western-diet mice) |
+
+**Chemical noise characterization** -- Each page shows one sample's chemical noise analysis: (1) the chromatogram with detected chemical noise peaks marked, (2) a histogram of peak retention times, (3) a histogram of peak widths (wavelet scales), and (4) a histogram of peak powers. Together these panels define the empirical distributions used to parameterize the generative null model for that sample's transition.
+
+| File | Samples included |
+|------|------------------|
+| `Clonidine_Quant_Chemical_Noise_Analysis.pdf` | All Clonidine reagent blanks and dilution levels |
+| `Gabapentin_Quant_Chemical_Noise_Analysis.pdf` | All Gabapentin reagent blanks and dilution levels |
+| `Lorazepam_Quant_Chemical_Noise_Analysis.pdf` | All Lorazepam reagent blanks and dilution levels |
+| `RvT4_Chemical_Noise_Analysis.pdf` | All RvT4 blanks and biological samples on both SCIEX instruments |
 
 ## Pre-Computed Results
 
@@ -105,20 +137,30 @@ BiocManager::install(c("MSnbase", "MassSpecWavelet"))
 
 ### Regenerate Figures from Pre-Computed Results
 
-The plotting scripts read JSON files from `results/json/` and produce the supplemental figure PDFs. No simulation is needed.
+The plotting scripts read JSON files from `results/json/` and produce figure PDFs. No simulation is needed.
 
 ```bash
-# Chemical noise characterization
+# Main figures -- null model chromatograms
+Rscript code/plot-RvT4-null-chromatograms.R
+Rscript code/plot-waters-null-chromatograms.R
+
+# Main figures -- chemical noise comparison plots
+Rscript code/plot-RvT4-chemical-noise.R
+Rscript code/waters-chemical-noise-comparison-plots.R
+
+# Supplemental figures -- hypothesis testing (per-sample)
+Rscript code/waters-null-wavelet-plot.R
+Rscript code/RvT4-null-wavelet-plot.R
+
+# Supplemental figures -- chemical noise characterization (per-sample)
 Rscript code/Clonidine-quant-chemical-noise.R
 Rscript code/Gabapentin-quant-chemical-noise.R
 Rscript code/Lorazepam-quant-chemical-noise.R
 Rscript code/RvT4-chemical-noise.R
 
-# Waters dilution series hypothesis testing plots
-Rscript code/waters-null-wavelet-plot.R
-
-# RvT4 hypothesis testing plots
-Rscript code/RvT4-null-wavelet-plot.R
+# Supplemental figures -- chemical noise characterization (comparison)
+Rscript code/plot-waters-chemical-noise-supplemental.R
+Rscript code/plot-RvT4-chemical-noise-supplemental.R
 ```
 
 ### Re-Run Monte Carlo Simulations
@@ -142,8 +184,14 @@ Rscript code/RvT4-null-wavelet.R
 | `mc_wavelet_functions.R` | Shared analysis functions (CWT, null model, Monte Carlo) |
 | `mc_wavelet_plot_functions.R` | Shared plotting functions |
 | `*-null-wavelet.R` | Monte Carlo simulation (mzML -> JSON) |
-| `*-null-wavelet-plot.R` | Hypothesis testing plots (JSON -> PDF) |
-| `*-chemical-noise.R` | Chemical noise characterization (JSON -> PDF) |
+| `*-null-wavelet-plot.R` | Hypothesis testing plots (JSON -> supplemental PDF) |
+| `*-chemical-noise.R` | Chemical noise characterization (JSON -> supplemental PDF) |
+| `plot-RvT4-null-chromatograms.R` | RvT4 null model chromatograms (main figure) |
+| `plot-waters-null-chromatograms.R` | Waters null model chromatograms (main figure) |
+| `plot-RvT4-chemical-noise.R` | RvT4 chemical noise comparison (main figures) |
+| `waters-chemical-noise-comparison-plots.R` | Waters chemical noise comparison (main figures) |
+| `plot-RvT4-chemical-noise-supplemental.R` | RvT4 chemical noise supplemental comparison |
+| `plot-waters-chemical-noise-supplemental.R` | Waters chemical noise supplemental comparison |
 | `waters-noise-pooled.R` | Pooled noise estimates across replicates |
 
 ## Data Sources

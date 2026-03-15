@@ -40,8 +40,10 @@ sanitize_filename <- function(name) {
 #   compound_name  - compound label for titles (e.g. "Quant" or "Qual")
 #   precursor_mz   - precursor m/z value for titles (e.g. "361.1")
 #   product_mz     - product m/z value for titles (e.g. "211.1" or "193.1")
+#   analyte_name   - analyte label for titles (e.g. "RvT4", "Lorazepam")
 print_summary_plots <- function(instrument, peak_data, csv_prefix,
-                                compound_name, precursor_mz, product_mz) {
+                                compound_name, precursor_mz, product_mz,
+                                analyte_name = "RvT4") {
   # Combine all samples' data into a single data frame
   peak_data_combined <- bind_rows(peak_data, .id = "Sample")
 
@@ -56,10 +58,10 @@ print_summary_plots <- function(instrument, peak_data, csv_prefix,
 
   # Build dynamic title components
   time_title <- bquote(
-    "Time Distribution - RvT4" ~ .(compound_name) ~ "(m/z" ~ .(precursor_mz) %->% .(product_mz) ~ ") -" ~ .(instrument)
+    "Time Distribution -" ~ .(analyte_name) ~ .(compound_name) ~ "(m/z" ~ .(precursor_mz) %->% .(product_mz) ~ ") -" ~ .(instrument)
   )
   power_title <- bquote(
-    "Peak Power Distribution - RvT4" ~ .(compound_name) ~ "(m/z" ~ .(precursor_mz) %->% .(product_mz) ~ ") -" ~ .(instrument)
+    "Peak Power Distribution -" ~ .(analyte_name) ~ .(compound_name) ~ "(m/z" ~ .(precursor_mz) %->% .(product_mz) ~ ") -" ~ .(instrument)
   )
 
   # Create time distribution plot
