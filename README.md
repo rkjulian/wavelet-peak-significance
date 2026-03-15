@@ -208,4 +208,4 @@ Raw data from Walker et al. (2024) obtained from BioStudies database accession [
 
 ## License
 
-See LICENSE file for details.
+Copyright 2025 The Authors. Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the full text.
