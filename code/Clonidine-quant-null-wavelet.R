@@ -212,7 +212,14 @@ for (i in 1:nrow(combined_data)) {
         # internally, returning only the summed count matrix. This minimizes
         # inter-process communication from n_sim transfers to n_cores transfers.
         counts <- foreach(
-            worker = seq_len(n_cores), .combine = "+"
+            worker = seq_len(n_cores), .combine = "+",
+            .packages = c("MassSpecWavelet", "truncnorm"),
+            .export = c("n_cores", "sims_per_worker", "n_sim",
+                         "adjusted_power", "lambda_events", "peak_data",
+                         "power_density", "retention_time", "scales",
+                         "wavelet_type", "blank_noise_mean", "blank_noise_std",
+                         "num_new_events", "n_points",
+                         "sample_from_kde", "generate_gaussian")
         ) %dopar% {
             # Determine how many simulations this worker runs
             worker_n <- if (worker < n_cores) {

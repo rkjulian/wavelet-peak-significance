@@ -224,6 +224,12 @@ Raw data from Walker et al. (2024) obtained from BioStudies database accession [
 
 Clinical pain panel assay acquired on a SCIEX 6500 instrument. SRM transition m/z 238 -> 125 (quantifier). Sixteen samples analyzed: one low calibration standard (STD), one matrix blank, and 14 biological samples. Four biological samples (Inj 8, 11, 13, 27) are confirmed ketamine-positive with signal intensity below the low calibration standard. See manuscript Methods for full assay details.
 
+## Platform Compatibility
+
+This code was developed and tested on macOS and Linux. It should also work on Windows, but Windows has not been extensively tested. If you encounter any platform-specific issues, please open an issue on this repository or contact rkjulian@indigobio.com.
+
+The Monte Carlo simulation scripts use `foreach` with `doParallel` for parallel processing. On macOS and Linux, `registerDoParallel(cores=)` uses fork-based parallelism; on Windows it falls back to PSOCK clusters. The `.packages` and `.export` arguments in each `foreach()` call ensure that required packages and variables are available to worker processes on all platforms.
+
 ## License
 
 Copyright 2025 The Authors. Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for the full text.
